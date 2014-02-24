@@ -312,6 +312,7 @@ inline void dispatch_async_afreentrant(dispatch_queue_t queue, dispatch_block_t 
 @interface SDURLCache ()
 @property (nonatomic, retain) NSString *diskCachePath;
 @property (nonatomic, retain) NSMutableDictionary *diskCacheInfo;
+@property (nonatomic, assign) NSUInteger ourDiskCapacity;
 - (void)periodicMaintenance;
 @end
 
@@ -566,7 +567,7 @@ static dispatch_queue_t get_disk_io_queue() {
 }
 
 - (void)balanceDiskUsage {
-    if (_diskCacheUsage < self.diskCapacity) {
+    if (_diskCacheUsage < self.ourDiskCapacity) {
         return; // Already done
     }
     
@@ -576,7 +577,7 @@ static dispatch_queue_t get_disk_io_queue() {
         // Apply LRU cache eviction algorithm while disk usage outreach capacity
         NSDictionary *sizes = [self.diskCacheInfo objectForKey:kAFURLCacheInfoSizesKey];
         
-        NSInteger capacityToSave = _diskCacheUsage - self.diskCapacity;
+        NSInteger capacityToSave = _diskCacheUsage - self.ourDiskCapacity;
         NSArray *sortedKeys = [[self.diskCacheInfo objectForKey:kAFURLCacheInfoAccessesKey] keysSortedByValueUsingSelector:@selector(compare:)];
         NSEnumerator *enumerator = [sortedKeys objectEnumerator];
         NSString *cacheKey;
@@ -632,7 +633,7 @@ static dispatch_queue_t get_disk_io_queue() {
 
 // called in NSTimer
 - (void)periodicMaintenance {
-    if (_diskCacheUsage > self.diskCapacity) {
+    if (_diskCacheUsage > self.ourDiskCapacity) {
         dispatch_async(get_disk_io_queue(), ^{
             [self balanceDiskUsage];
         });
@@ -654,9 +655,10 @@ static dispatch_queue_t get_disk_io_queue() {
 #pragma mark NSURLCache
 
 - (id)initWithMemoryCapacity:(NSUInteger)memoryCapacity diskCapacity:(NSUInteger)diskCapacity diskPath:(NSString *)path {
-    if ((self = [super initWithMemoryCapacity:memoryCapacity diskCapacity:diskCapacity diskPath:path])) {
+    if ((self = [super initWithMemoryCapacity:memoryCapacity diskCapacity:0 diskPath:nil])) {
         self.minCacheInterval = kAFURLCacheInfoDefaultMinCacheInterval;
         self.shouldRespectCacheControlHeaders = YES;
+        self.ourDiskCapacity = diskCapacity;
         self.diskCachePath = path;
         self.ignoreMemoryOnlyStoragePolicy = NO;
 	}
@@ -682,7 +684,7 @@ static dispatch_queue_t get_disk_io_queue() {
     NSURLCacheStoragePolicy storagePolicy = cachedResponse.storagePolicy;
     if ((storagePolicy == NSURLCacheStorageAllowed || (storagePolicy == NSURLCacheStorageAllowedInMemoryOnly && _ignoreMemoryOnlyStoragePolicy))
         && [cachedResponse.response isKindOfClass:[NSHTTPURLResponse self]]
-        && cachedResponse.data.length < self.diskCapacity)
+        && cachedResponse.data.length < self.ourDiskCapacity)
     {
         if (self.shouldRespectCacheControlHeaders)
         {
