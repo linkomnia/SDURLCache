@@ -298,6 +298,29 @@ static NSDate *_parseHTTPDate(const char *buf, size_t bufLen) {
 
 @end
 
+@implementation NSCachedURLResponse(ForcedNoExpiry)
+
+- (NSCachedURLResponse *)nonExpiringResponse {
+    if ([[self response] isKindOfClass:[NSHTTPURLResponse class]]) {
+        NSHTTPURLResponse *oldResponse = (NSHTTPURLResponse *)[self response];
+        NSMutableDictionary *headers = [[oldResponse allHeaderFields] mutableCopy];
+        [headers removeObjectForKey:@"Expires"];
+        headers[@"Cache-Control"] = @"max-age=30758400";  // 1 year
+        NSHTTPURLResponse *newResponse = [[NSHTTPURLResponse alloc] initWithURL:oldResponse.URL
+                                                                     statusCode:oldResponse.statusCode
+                                                                    HTTPVersion:@"HTTP/1.1"
+                                                                   headerFields:headers];
+        return [[NSCachedURLResponse alloc] initWithResponse:newResponse
+                                                        data:self.data
+                                                    userInfo:self.userInfo
+                                               storagePolicy:self.storagePolicy];
+    } else {
+        return self;
+    }
+}
+
+@end
+
 // deadlock-free variant of dispatch_sync
 void dispatch_sync_afreentrant(dispatch_queue_t queue, dispatch_block_t block);
 inline void dispatch_sync_afreentrant(dispatch_queue_t queue, dispatch_block_t block) {
@@ -725,6 +748,9 @@ static dispatch_queue_t get_disk_io_queue() {
             @try {
                 response = [NSKeyedUnarchiver unarchiveObjectWithFile:[_diskCachePath stringByAppendingPathComponent:cacheKey]];
                 if (response) {
+                    if (!self.shouldRespectCacheControlHeaders) {
+                        response = [response nonExpiringResponse];
+                    }
                     // OPTI: Log the entry last access time for LRU cache eviction algorithm but don't save the dictionary
                     //       on disk now in order to save IO and time
                     [accesses setObject:[NSDate date] forKey:cacheKey];
