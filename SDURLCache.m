@@ -22,6 +22,7 @@
 // THE SOFTWARE.
 
 #import "SDURLCache.h"
+#import "SDCachedURLResponse.h"
 #import <CommonCrypto/CommonDigest.h>
 
 #define kAFURLCachePath @"SDNetworkingURLCache"
@@ -273,31 +274,6 @@ static NSDate *_parseHTTPDate(const char *buf, size_t bufLen) {
     return(date);
 }
 
-
-@implementation NSCachedURLResponse(NSCoder)
-
-// This is an intentional override of the default behavior. Silence the warning. (supported by Xcode 4.3 and above)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wobjc-protocol-method-implementation"
-
-- (void)encodeWithCoder:(NSCoder *)coder {
-    [coder encodeObject:self.data forKey:@"data"];
-    [coder encodeObject:self.response forKey:@"response"];
-    [coder encodeObject:self.userInfo forKey:@"userInfo"];
-    [coder encodeInt:self.storagePolicy forKey:@"storagePolicy"];
-}
-
-- (id)initWithCoder:(NSCoder *)coder {
-    return [self initWithResponse:[coder decodeObjectForKey:@"response"]
-                             data:[coder decodeObjectForKey:@"data"]
-                         userInfo:[coder decodeObjectForKey:@"userInfo"]
-                    storagePolicy:[coder decodeIntForKey:@"storagePolicy"]];
-}
-
-#pragma clang diagnostic pop
-
-@end
-
 @implementation NSCachedURLResponse(ForcedNoExpiry)
 
 - (NSCachedURLResponse *)nonExpiringResponse {
@@ -358,7 +334,7 @@ inline void dispatch_async_afreentrant(dispatch_queue_t queue, dispatch_block_t 
     const char *str = [url.absoluteString UTF8String];
     unsigned char r[CC_MD5_DIGEST_LENGTH];
     CC_MD5(str, strlen(str), r);
-    static NSString *cacheFormatVersion = @"2";
+    static NSString *cacheFormatVersion = @"3";
     return [NSString stringWithFormat:@"%@_%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
             cacheFormatVersion, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15]];
 }
@@ -623,7 +599,8 @@ static dispatch_queue_t get_disk_io_queue() {
     [self createDiskCachePath];
     
     // Archive the cached response on disk
-    if (![NSKeyedArchiver archiveRootObject:cachedResponse toFile:cacheFilePath]) {
+    SDCachedURLResponse *resp = [SDCachedURLResponse cachedURLResponseWithNSCachedURLResponse:cachedResponse];
+    if (![NSKeyedArchiver archiveRootObject:resp toFile:cacheFilePath]) {
         // Caching failed for some reason
         return;
     }
@@ -746,8 +723,9 @@ static dispatch_queue_t get_disk_io_queue() {
         NSMutableDictionary *accesses = [self.diskCacheInfo objectForKey:kAFURLCacheInfoAccessesKey];
         if ([accesses objectForKey:cacheKey]) { // OPTI: Check for cache-hit in a in-memory dictionnary before to hit the FS
             @try {
-                response = [NSKeyedUnarchiver unarchiveObjectWithFile:[_diskCachePath stringByAppendingPathComponent:cacheKey]];
-                if (response) {
+                SDCachedURLResponse *resp = [NSKeyedUnarchiver unarchiveObjectWithFile:[_diskCachePath stringByAppendingPathComponent:cacheKey]];
+                if (resp) {
+                    response = resp.response;
                     if (!self.shouldRespectCacheControlHeaders) {
                         response = [response nonExpiringResponse];
                     }
