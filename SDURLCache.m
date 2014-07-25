@@ -332,11 +332,11 @@ inline void dispatch_async_afreentrant(dispatch_queue_t queue, dispatch_block_t 
 
 + (NSString *)cacheKeyForURL:(NSURL *)url {
     const char *str = [url.absoluteString UTF8String];
-    unsigned char r[CC_MD5_DIGEST_LENGTH];
-    CC_MD5(str, strlen(str), r);
-    static NSString *cacheFormatVersion = @"3";
-    return [NSString stringWithFormat:@"%@_%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-            cacheFormatVersion, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15]];
+    unsigned char r[CC_SHA1_DIGEST_LENGTH];
+    CC_SHA1(str, (CC_LONG)strlen(str), r);
+    static NSString *cacheFormatVersion = @"2";
+    return [NSString stringWithFormat:@"%@_%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+            cacheFormatVersion, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15], r[16], r[17], r[18], r[19]];
 }
 
 #pragma mark SDURLCache (private)
@@ -593,6 +593,11 @@ static dispatch_queue_t get_disk_io_queue() {
 
 
 - (void)storeRequestToDisk:(NSURLRequest *)request response:(NSCachedURLResponse *)cachedResponse {
+    if ([cachedResponse.response isKindOfClass:[NSHTTPURLResponse class]] && [(NSHTTPURLResponse *)cachedResponse.response statusCode] == 301) {
+        NSString *location = [(NSHTTPURLResponse *)cachedResponse.response allHeaderFields][@"Location"];
+        NSLog(@"storing 301 to cache, req: %@ location: %@", [request.URL absoluteString], location);
+    }
+
     NSString *cacheKey = [[self class] cacheKeyForURL:request.URL];
     NSString *cacheFilePath = [_diskCachePath stringByAppendingPathComponent:cacheKey];
     
@@ -707,13 +712,32 @@ static dispatch_queue_t get_disk_io_queue() {
 }
 
 - (NSCachedURLResponse *)cachedResponseForRequest:(NSURLRequest *)request {
+    NSCachedURLResponse *resp = [self realCachedResponseForRequest:request];
+    while ([resp.response isKindOfClass:[NSHTTPURLResponse class]] && [(NSHTTPURLResponse *)resp.response statusCode] == 301) {
+        NSString *location = [(NSHTTPURLResponse *)resp.response allHeaderFields][@"Location"];
+        if ([location length] > 0) {
+            NSURL *url = [NSURL URLWithString:location];
+            if (url == nil) {
+                break;
+            }
+            NSMutableURLRequest *redirectedReq = [request mutableCopy];
+            redirectedReq.URL = url;
+            resp = [self realCachedResponseForRequest:redirectedReq];
+        } else {
+            break;
+        }
+    }
+    return resp;
+}
+
+- (NSCachedURLResponse *)realCachedResponseForRequest:(NSURLRequest *)request {
     request = [[self class] canonicalRequestForRequest:request];
     
     NSCachedURLResponse *memoryResponse = [super cachedResponseForRequest:request];
     if (memoryResponse) {
         return memoryResponse;
     }
-    
+
     NSString *cacheKey = [[self class] cacheKeyForURL:request.URL];
     
     // NOTE: We don't handle expiration here as even staled cache data is necessary for NSURLConnection to handle cache revalidation.
