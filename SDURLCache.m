@@ -636,7 +636,7 @@ static dispatch_queue_t get_disk_io_queue() {
         [(NSMutableDictionary *)[self.diskCacheInfo objectForKey:kAFURLCacheInfoURLsKey] setObject:request.URL.absoluteString forKey:cacheKey];
 #endif
         
-        [self saveCacheInfo];
+        _diskCacheInfoDirty = YES;
         
         // start timer for cleanup (rely on fact that dispatch_suspend syncs with disk cache queue)
         if (_timerPaused) {
@@ -676,6 +676,7 @@ static dispatch_queue_t get_disk_io_queue() {
         self.ourDiskCapacity = diskCapacity;
         self.diskCachePath = path;
         self.ignoreMemoryOnlyStoragePolicy = NO;
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationWillResignActive:) name:UIApplicationWillResignActiveNotification object:nil];
 	}
     
     return self;
@@ -829,6 +830,17 @@ static dispatch_queue_t get_disk_io_queue() {
     
     BOOL isCached = [[[NSFileManager alloc] init] fileExistsAtPath:cacheFile];
     return isCached;
+}
+
+#pragma mark
+
+- (void)applicationWillResignActive:(NSNotification *)note
+{
+    dispatch_async_afreentrant(get_disk_cache_queue(), ^{
+        if (_diskCacheInfoDirty) {
+            [self saveCacheInfo];
+        }
+    });
 }
 
 #pragma mark NSObject
