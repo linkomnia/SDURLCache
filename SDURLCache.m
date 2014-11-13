@@ -528,12 +528,22 @@ static dispatch_queue_t get_disk_io_queue() {
     dispatch_async_afreentrant(get_disk_cache_queue(), ^{
         // Previous versions of SDURLCache stored a diskUsage key that could go wrong, just get rid of it.
         [self.diskCacheInfo removeObjectForKey:@"diskUsage"];
-        NSData *data = [NSPropertyListSerialization dataFromPropertyList:self.diskCacheInfo format:NSPropertyListBinaryFormat_v1_0 errorDescription:NULL];
-        if (data) {
-            [data writeToFile:[_diskCachePath stringByAppendingPathComponent:kAFURLCacheInfoFileName] atomically:YES];
+        const char *tmptmpl = [_diskCachePath stringByAppendingPathComponent:@"tmp.XXXXXX"].UTF8String;
+        size_t tmplen = strlen(tmptmpl) + 1;
+        char *tmp = malloc(tmplen);
+        memcpy(tmp, tmptmpl, tmplen);
+        const char *tmppath = mktemp(tmp);
+        if (tmppath) {
+            NSOutputStream *outputStream = [NSOutputStream outputStreamToFileAtPath:[NSString stringWithUTF8String:tmppath] append:NO];
+            NSError *err = nil;
+            [NSPropertyListSerialization writePropertyList:self.diskCacheInfo toStream:outputStream format:NSPropertyListXMLFormat_v1_0 options:0 error:&err];
+            [outputStream close];
+            if (err == nil) {
+                rename(tmppath, [_diskCachePath stringByAppendingPathComponent:kAFURLCacheInfoFileName].UTF8String);
+            }
+            _diskCacheInfoDirty = NO;
         }
-        
-        _diskCacheInfoDirty = NO;
+        free(tmp);
     });
 }
 
